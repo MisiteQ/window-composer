@@ -1,0 +1,35 @@
+#!/bin/bash
+# 配置变更应用之后执行。
+#
+# 目标显示器 / 轮询间隔 / 时区都是通过环境变量传给容器的，
+# 容器不重建就不会生效，因此这里按新配置重建一次容器。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+compose_file=$(wc_compose_file)
+d=$(wc_docker)
+
+if [ -z "$d" ]; then
+    wc_log "未检测到 docker，请手动重启应用使新配置生效"
+    exit 0
+fi
+
+# 优先用 compose 重建：能同时应用新的环境变量与镜像 tag
+if [ -f "$compose_file" ] && "$d" compose version >/dev/null 2>&1; then
+    wc_log "按新配置重建容器"
+    if "$d" compose -f "$compose_file" up -d --force-recreate >>"$WC_LOG" 2>&1; then
+        wc_log "容器已按新配置启动"
+        exit 0
+    fi
+    wc_log "【WARN】compose 重建失败，回退为重启容器（环境变量可能未更新）"
+fi
+
+if "$d" inspect "$WC_CONTAINER" >/dev/null 2>&1; then
+    "$d" restart "$WC_CONTAINER" >>"$WC_LOG" 2>&1 || \
+        wc_log "【WARN】容器重启失败，请在应用中心手动重启"
+fi
+
+exit 0

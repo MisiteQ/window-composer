@@ -1,0 +1,64 @@
+# window-composer —— 由飞牛应用中心根据 config/resource 的 docker-project 直接执行。
+#
+# 离线自包含：镜像 window-composer:<版本> 由安装包内的
+# app/docker/image/window-composer-<版本>.tar 在 cmd/install_callback 里
+# docker load 导入本机，因此 pull_policy: never —— 安装后 NAS 端不会再联网
+# 拉取任何镜像或依赖。
+services:
+  window-composer:
+    image: window-composer:1.0.0
+    container_name: window-composer
+    restart: unless-stopped
+    # 只用安装包内导入的本地镜像，任何情况下都不联网拉取。
+    # 若你的 fnOS 版本自带的 docker compose 过旧（< v2.1，2021 年）而报
+    # "Additional property pull_policy is not allowed"，可删掉这一行：
+    # compose 默认策略是"本地没有才拉取"，而 install_callback 已经导入了镜像。
+    pull_policy: never
+
+    # Xorg 需要打开 DRM master 才能把画面送到物理显示器；privileged 同时
+    # 覆盖 /dev/dri 与输入设备。宿主机没有 /dev/dri 时容器仍能启动并降级为
+    # 虚拟输出（dummy），控制面板照常可用。
+    privileged: true
+
+    # 与 NAS 共用网络栈：控制面板直接监听 NAS 的 service_port，
+    # 面板里改端口也不需要同步改 compose。
+    network_mode: host
+
+    environment:
+      - TZ=${wizard_timezone}
+      # 目标显示器（留空 = 自动选 primary / 首个已连接输出）
+      - WC_TARGET_OUTPUT=${wizard_target_output}
+      # 显示器热插拔轮询间隔（秒），0 = 关闭轮询
+      - WC_DISPLAY_POLL_INTERVAL=${wizard_poll_interval}
+
+    volumes:
+      # 布局 / 配置 / 日志 / 截图持久化到应用数据目录，卸载重装不丢
+      - ${TRIM_PKGVAR}/data:/data
+      # 宿主 udev 数据库：WirePlumber 据此枚举 ALSA 物理声卡（没有它 pactl
+      # 里只有 auto_null/Dummy Output），同时也是 DRM 热插拔事件的数据源。
+      # 必须 :ro，容器只读即可。
+      - /run/udev:/run/udev:ro
+      # 宿主 Docker 守护进程：让面板能扫描出 NAS 上已安装的 Docker 容器，
+      # 直接走 Docker Engine HTTP API（容器内不需要装 docker CLI，也不联网）。
+      # 不加 :ro —— 连接 unix socket 需要写权限，只读挂载在部分环境下 connect 会失败；
+      # 本容器本来就以 privileged 运行，:ro 也换不来实质的权限收紧。
+      # 若这套 compose 在你的飞牛版本上被安装器拒绝，删掉下面这一行即可：
+      # Docker 分组会整体静默消失，其余功能不受影响。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 飞牛应用扫描：读宿主应用目录（manifest 等元数据）。
+      # 注意 /var/apps/<应用>/target 是绝对软链：第三方应用指向
+      # /volN/@appcenter/<应用>、飞牛内置应用（trim.*）指向
+      # /usr/local/apps/@appcenter/<应用>。只挂 /var/apps 软链会在容器内
+      # 断裂（能扫到名字但读不到 target/ui/config，Web 入口为空），
+      # 因此下面把两个软链根也一并挂入。
+      - /var/apps:/host_apps:ro
+      # 运行状态判定：读宿主进程表（非容器型飞牛应用以此判断是否运行中）
+      - /proc:/hostproc:ro
+      # 应用实体目录（软链目标）。/vol2~/vol4 源路径在没有对应存储卷时
+      # Docker 会自动建空目录，不影响启动；应用安装在非系统卷时需要它们。
+      - /vol1/@appcenter:/vol1/@appcenter:ro
+      - /vol2/@appcenter:/vol2/@appcenter:ro
+      - /vol3/@appcenter:/vol3/@appcenter:ro
+      - /vol4/@appcenter:/vol4/@appcenter:ro
+      # 飞牛内置应用（影视/相册/音乐等 trim.*）实体
+      - /usr/local/apps/@appcenter:/usr/local/apps/@appcenter:ro

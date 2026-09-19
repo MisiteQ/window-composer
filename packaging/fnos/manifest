@@ -1,0 +1,39 @@
+; window-composer 飞牛 fnOS 应用清单（INI 格式）
+;
+; 字段含义见 https://developer.fnnas.com/docs/guide
+; 注意：version 必须是 X.Y.Z 形式，且要和打包进 fpk 的 docker 镜像 tag
+;       严格一致（scripts/build-package.sh 用同一个版本号做 tag），
+;       否则安装后 compose 找不到本地镜像会去联网拉取而失败。
+
+appname=window-composer
+version=1.0.0
+display_name=Window Composer
+desc=把运行在飞牛 NAS 上的应用，以窗口形式编排并输出到 NAS 的物理显示器。<br>支持 HDMI / DisplayPort / USB-C(DP Alt Mode) / VGA / DVI 等全部显示接口，热插拔自动识别；通过浏览器远程控制面板画框布局、边缘吸附、多窗口不重叠、旋转与截图。
+source=thirdparty
+; 包内自带的是 amd64 镜像 tar，属于"含特定架构二进制"，所以只能声明 x86。
+; 官方说明：all 仅用于不含任何架构相关二进制的包；在这里写 all 会让 ARM
+; 飞牛设备也允许安装，结果是容器起不来。在 ARM 机器上打包请加
+; `bash scripts/build-package.sh --platform arm`。
+platform=x86
+
+maintainer=Misite齊
+maintainer_url=https://github.com/MisiteQ
+
+; 实测最低系统版本；低于该版本的应用中心不保证支持 docker-project 资源
+os_min_version=0.9.27
+
+; 桌面入口：app/ui/config 里注册的入口 id
+desktop_uidir=ui
+desktop_applaunchname=window-composer.main
+
+; 控制面板端口（容器内 uvicorn 监听同端口）
+service_port=8181
+checkport=true
+
+; 由飞牛应用中心显示启动/停止按钮（容器生命周期交给 docker-project 资源）
+ctl_stop=true
+
+; 本应用使用容器内 /data 持久化，不需要用户授权 NAS 目录
+disable_authorization_path=true
+
+changelog=1.0.0 首个版本：通用多显示接口支持（HDMI/DP/USB-C/VGA/DVI）、显示器热插拔守护、目标显示器切换、离线自包含镜像。

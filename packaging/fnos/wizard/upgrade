@@ -1,0 +1,13 @@
+[
+  {
+    "stepTitle": "升级提示",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_keep_data",
+        "label": "保留原有布局与配置（1=保留，0=重置）。数据在应用数据目录，升级默认保留",
+        "initValue": "1"
+      }
+    ]
+  }
+]

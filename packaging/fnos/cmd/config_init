@@ -1,0 +1,11 @@
+#!/bin/bash
+# 配置变更应用之前执行：记录本次改了什么，便于排查。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+wc_log "配置变更：目标显示器='${wizard_target_output:-}' 轮询间隔='${wizard_poll_interval:-}' 时区='${wizard_timezone:-}'"
+
+exit 0

@@ -1,0 +1,55 @@
+#!/bin/bash
+# window-composer 生命周期入口：start / stop / status
+#
+# 与官方约定一致（见 https://developer.fnnas.com/docs/cli/fnpack/）：
+#   - 容器的启停由飞牛按 config/resource 里的 docker-project 处理，
+#     因此 start / stop 做成幂等的兜底动作即可，不与平台争抢生命周期；
+#   - status 必须准确：0 = 正在运行，3 = 未运行，其它 = 出错。
+#     应用中心/桌面卡片的"运行中"状态完全依赖这个返回值。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+case "${1:-}" in
+    start)
+        # 平台已按 docker-project 拉起容器；这里仅在容器存在但未运行时补一刀，
+        # 避免"平台认为已启动、实际容器退出"时状态不一致。
+        state=$(wc_container_state)
+        if [ "$state" = "stopped" ]; then
+            d=$(wc_docker)
+            if [ -n "$d" ]; then
+                wc_log "容器处于停止状态，尝试启动"
+                "$d" start "$WC_CONTAINER" >>"$WC_LOG" 2>&1 || \
+                    wc_log "【WARN】docker start 失败，等待平台拉起"
+            fi
+        fi
+        exit 0
+        ;;
+
+    stop)
+        state=$(wc_container_state)
+        if [ "$state" = "running" ]; then
+            d=$(wc_docker)
+            if [ -n "$d" ]; then
+                wc_log "停止容器"
+                "$d" stop "$WC_CONTAINER" >>"$WC_LOG" 2>&1 || true
+            fi
+        fi
+        exit 0
+        ;;
+
+    status)
+        case "$(wc_container_state)" in
+            running) exit 0 ;;
+            stopped | absent) exit 3 ;;
+            *) exit 3 ;;
+        esac
+        ;;
+
+    *)
+        echo "用法: $0 {start|stop|status}" >&2
+        exit 1
+        ;;
+esac

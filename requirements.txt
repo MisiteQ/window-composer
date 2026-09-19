@@ -1,0 +1,7 @@
+# window-composer Python 依赖（全部在镜像构建时预装，NAS 端无需联网安装）
+# 不锁死小版本：飞牛 fnOS 上的 Debian bookworm 提供 python3.11，
+# 下列包在其上均可正常安装。
+fastapi>=0.111,<1.0
+uvicorn>=0.30
+jinja2>=3.1
+psutil>=5.9

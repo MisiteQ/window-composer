@@ -1,0 +1,58 @@
+# window-composer 独立运行用的 compose（不走飞牛应用中心时使用）。
+#
+# 飞牛应用中心安装（推荐）请看 INSTALL.md 的「方式一」，
+# 那份 compose 在 packaging/fnos/app/docker/docker-compose.yaml，
+# 会额外做"离线导入镜像"，不依赖联网。
+#
+# 用法：
+#   docker compose up -d
+#   浏览器打开 http://<NAS_IP>:8181
+#
+# 前置：镜像已构建或导入
+#   docker build -t window-composer:1.0.0 .
+#   # 或从安装包里导入： docker load -i packaging/fnos/app/docker/image/*.tar
+
+services:
+  window-composer:
+    image: window-composer:1.0.0
+    container_name: window-composer
+    restart: unless-stopped
+
+    # Xorg 需要打开 DRM master 才能输出到物理显示器
+    privileged: true
+
+    # 与宿主共用网络：控制面板直接监听 NAS 端口
+    network_mode: host
+
+    environment:
+      - TZ=Asia/Shanghai
+      # 目标显示器（留空 = 自动选择 primary / 首个已连接输出）
+      # 接口名可在控制面板"目标显示器"卡片里看到，例如 HDMI-A-1 / DP-1 / VGA-1
+      - WC_TARGET_OUTPUT=${WC_TARGET_OUTPUT:-}
+      # 显示器热插拔轮询间隔（秒），0 = 关闭
+      - WC_DISPLAY_POLL_INTERVAL=${WC_DISPLAY_POLL_INTERVAL:-5}
+
+    volumes:
+      # 布局 / 设置 / 日志 / 截图
+      - ./data:/data
+      # 宿主 udev 数据库：WirePlumber 枚举 ALSA 物理声卡的数据源，
+      # 也是 DRM 热插拔事件源，只读挂载
+      - /run/udev:/run/udev:ro
+      # 飞牛应用扫描：读宿主应用目录（manifest 等元数据）。
+      # /var/apps/<应用>/target 是绝对软链，实体在下面两个 appcenter 根，
+      # 必须一并挂入，否则只能扫到应用名、读不到 Web 入口配置。
+      - /var/apps:/host_apps:ro
+      # 运行状态判定：宿主进程表
+      - /proc:/hostproc:ro
+      # 应用实体目录（软链目标）：第三方应用在各存储卷的 @appcenter，
+      # /vol2~/vol4 在没有对应卷时 Docker 会自动建空目录，不影响启动。
+      - /vol1/@appcenter:/vol1/@appcenter:ro
+      - /vol2/@appcenter:/vol2/@appcenter:ro
+      - /vol3/@appcenter:/vol3/@appcenter:ro
+      - /vol4/@appcenter:/vol4/@appcenter:ro
+      # 飞牛内置应用（trim.*）实体
+      - /usr/local/apps/@appcenter:/usr/local/apps/@appcenter:ro
+      # Docker 容器扫描：宿主 Docker 守护进程，走 Docker Engine API，
+      # 容器内不需要装 docker CLI。不加 :ro（连接 unix socket 需要写权限）。
+      # 不用 Docker 扫描时删掉这一行即可，Docker 分组会整体消失。
+      - /var/run/docker.sock:/var/run/docker.sock

@@ -1,0 +1,37 @@
+# docker build 上下文裁剪。
+# 关键点：镜像要装的软件全部在构建期预装，安装到 NAS 后不再下载任何东西；
+# 而持久化数据、日志、构建产物绝不能进镜像（会让构建缓存失效、镜像变大）。
+
+.git
+.gitignore
+.workbuddy
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# 日志 / 运行时数据（本地调试可能留在仓库根目录）
+*.log
+data
+.localdata
+.themeshots
+screenshot.png
+
+# 构建与打包产物
+dist
+dist-fpk
+build
+*.fpk
+*.tar
+*.tar.gz
+*.tgz
+
+# 飞牛 FPK 打包源：里面有导出的镜像 tar（可达 1GB），绝不能进构建上下文
+packaging
+# 独立运行版 compose 只给用户看，不参与镜像构建
+docker-compose.yml
+
+# 仓库根目录的大图（面板图标用的是 src/static/window-composer.png）
+/window-composer.png
+
+# 注意：vendor/ 必须保留在构建上下文里——它承载离线 wheel，
+# 是"构建机无网也能出包"的关键。默认只有一个占位文件，几乎不占空间。
