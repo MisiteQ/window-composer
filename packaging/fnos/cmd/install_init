@@ -1,0 +1,24 @@
+#!/bin/bash
+# 安装文件落盘之前执行。此时还没有可用的应用目录，只做环境预检提示。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+wc_log "开始安装 window-composer ${TRIM_APPVER:-}"
+
+d=$(wc_docker)
+if [ -z "$d" ]; then
+    wc_log "【WARN】未检测到 docker，本应用依赖飞牛容器运行时"
+fi
+
+# 提示宿主机的显示接口情况，安装后出不来画面时用户能第一时间对照
+if [ -d /sys/class/drm ]; then
+    conn=$(ls /sys/class/drm 2>/dev/null | grep -E '^card[0-9]+-' | tr '\n' ' ')
+    wc_log "检测到内核显示连接器：${conn:-（无）}"
+else
+    wc_log "【WARN】宿主机没有 /sys/class/drm —— 可能无法输出到物理显示器（将降级为虚拟输出）"
+fi
+
+exit 0

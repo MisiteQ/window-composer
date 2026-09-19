@@ -1,0 +1,32 @@
+#!/bin/bash
+# 安装文件落盘之后执行。
+#
+# 这里是"离线自包含"的关键：把安装包里自带的 docker 镜像导入本机，
+# 之后容器启动时直接用本地镜像，NAS 端无需再下载任何东西。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+wc_log "应用目录：${TRIM_APPDEST:-?}"
+wc_log "数据目录：${TRIM_PKGVAR:-?}"
+
+mkdir -p "${TRIM_PKGVAR:-/tmp}/data" 2>/dev/null || true
+wc_log "生命周期日志：$WC_LOG"
+
+if wc_load_image; then
+    wc_log "离线镜像导入完成，后续启动不再需要网络"
+else
+    rc=$?
+    wc_log "【WARN】离线镜像导入未成功（rc=$rc），将依赖平台 compose 自行拉取"
+fi
+
+if [ -f "$(wc_compose_file)" ]; then
+    wc_log "compose 文件就绪：$(wc_compose_file)"
+else
+    wc_log "【ERROR】缺少 compose 文件：$(wc_compose_file)"
+fi
+
+wc_log "安装完成"
+exit 0

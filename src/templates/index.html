@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="{{ settings.ui_theme or 'midnight' }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>window-composer 窗口合成管理平台</title>
+    <link rel="icon" type="image/png" href="/static/window-composer.png">
+    <link rel="stylesheet" href="/static/index.css?v=20260919">
+    <script>
+        // 主题由服务端渲染到 <html data-theme>，正常情况下渲染时就已经是对的颜色，
+        // 不会有首屏闪白。这里只在服务端没给值（静态打开 / 接口异常）时，
+        // 才回退到本机浏览器上次选过的主题。
+        (function () {
+            var el = document.documentElement;
+            if (!el.dataset.theme) {
+                try {
+                    var saved = localStorage.getItem('wc-theme');
+                    if (saved) el.dataset.theme = saved;
+                } catch (e) { /* 隐私模式禁 localStorage，忽略 */ }
+            }
+        })();
+    </script>
+</head>
+<body>
+<div class="container">
+
+    <!-- ===== 顶部 Hero Header ===== -->
+    <header class="app-header">
+        <div class="header-top">
+            <div class="header-brand">
+                <img src="/static/window-composer.png" alt="window-composer" class="brand-logo">
+                <div class="header-title">
+                    <h1>window-composer 窗口合成控制面板</h1>
+                    <div class="subtitle">飞牛 NAS 大屏显示 · HDMI / DP / USB-C / VGA / DVI 全接口 · 容器化部署</div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="theme-picker" id="themePicker"
+                     title="切换面板配色。选择会保存到服务端，换设备 / 清缓存后依然生效">
+                    <span class="theme-label">配色</span>
+                    <div class="theme-swatches" id="themeSwatches"></div>
+                    <span class="theme-name" id="themeName">--</span>
+                </div>
+                <div id="status-line" class="status-badge">
+                    <span class="dot"></span>
+                    <span class="text">加载中...</span>
+                </div>
+            </div>
+        </div>
+        <div class="stat-chips">
+            <div class="stat-chip">
+                <span class="chip-label">输出后端</span>
+                <span id="chip-backend" class="chip-value">--</span>
+            </div>
+            <div class="stat-chip">
+                <span class="chip-label">分辨率</span>
+                <span id="chip-resolution" class="chip-value">{{settings.display_width}} × {{settings.display_height}}</span>
+            </div>
+            <div class="stat-chip">
+                <span class="chip-label">Web 端口</span>
+                <span class="chip-value">{{settings.web_port}}</span>
+            </div>
+            <div class="stat-chip">
+                <span class="chip-label">音频输出</span>
+                <span id="chip-audio" class="chip-value">未选择</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ===== 01 系统设置 ===== -->
+    <div class="section-group">
+        <div class="section-title">
+            <span class="section-num">01</span>
+            <span class="section-name">系统设置</span>
+            <span class="section-line"></span>
+        </div>
+
+        <div class="grid-2">
+
+            <section class="card">
+                <h3>系统状态</h3>
+                <div class="kv-row">
+                    <span class="kv-label">当前分辨率</span>
+                    <span id="status-resolution" class="current-value">{{settings.display_width}} × {{settings.display_height}}</span>
+                </div>
+                <div class="kv-row">
+                    <span class="kv-label">开机自启</span>
+                    <span id="status-autostart" class="current-value">{{"已开启" if settings.auto_start else "已关闭"}}</span>
+                </div>
+                <div class="row row-tight card-actions">
+                    <button class="primary" onclick="openLogModal()">查看运行日志</button>
+                    <button onclick="takeScreenshot()">截取屏幕画面</button>
+                </div>
+            </section>
+
+            <section class="card">
+                <h3>开机自启</h3>
+                <div class="kv-row">
+                    <span class="kv-label">当前状态</span>
+                    <span class="current-value">{{"已开启" if settings.auto_start else "已关闭"}}</span>
+                </div>
+                <div class="row row-tight card-actions">
+                    <button class="success" onclick="setAutoStart(true)">开启自启</button>
+                    <button class="warn" onclick="setAutoStart(false)">关闭自启</button>
+                </div>
+            </section>
+
+            <section class="card">
+                <h3>访问令牌</h3>
+                {% if token_is_default %}
+                <div class="default-token-warn">
+                    ⚠ 当前仍使用出厂初始令牌 <code>admin123</code>，知道 NAS 地址的人都能登录。
+                    请立即在下方输入新令牌并保存。
+                </div>
+                {% endif %}
+                <div class="kv-row">
+                    <span class="kv-label">访问保护</span>
+                    <span id="token-required" class="current-value">{{"已开启" if settings.require_token else "已关闭"}}</span>
+                </div>
+                <div class="row row-tight card-actions">
+                    <input id="access-token-box" type="password" readonly
+                           style="flex:1;font-family:monospace" value="••••••••••••">
+                    <button onclick="revealAccessToken()">显示</button>
+                    <button class="primary" onclick="copyAccessToken()">复制</button>
+                </div>
+                <div class="row row-tight card-actions">
+                    <input id="new-access-token" type="text" autocomplete="off"
+                           style="flex:1;font-family:monospace"
+                           placeholder="输入自定义新令牌（6~64 位，字母数字 . _ @ -）">
+                    <input id="new-access-token2" type="text" autocomplete="off"
+                           style="flex:1;font-family:monospace"
+                           placeholder="再次输入新令牌确认">
+                    <button class="primary" onclick="setAccessToken()">保存新令牌</button>
+                </div>
+                <div class="row row-tight card-actions">
+                    <button class="warn" onclick="rotateAccessToken()">随机重置</button>
+                    <button class="success" onclick="setTokenRequired(true)">开启保护</button>
+                    <button onclick="setTokenRequired(false)">关闭保护</button>
+                </div>
+                <p class="hint">飞牛桌面打开免令牌；直接用 IP / curl 访问需令牌（?wc_at=令牌 或 X-Access-Token 头）。修改后其他设备需用新令牌重新登录。</p>
+            </section>
+
+            <section class="card">
+                <h3>Web 服务端口</h3>
+                <div class="kv-row">
+                    <span class="kv-label">当前端口</span>
+                    <span class="current-value">{{settings.web_port}}</span>
+                </div>
+                <div class="row row-tight card-actions">
+                    <input id="new-port" type="number" min="1024" max="65535" placeholder="输入新端口">
+                    <button class="primary" onclick="setWebPort()">保存</button>
+                </div>
+                <p class="hint">修改端口后需要重启容器生效</p>
+            </section>
+
+            <section class="card">
+                <h3>桌面背景色</h3>
+                <div class="kv-row">
+                    <span class="kv-label">当前颜色</span>
+                    <span class="color-swatch-wrap">
+                        <i id="cur-bg-swatch" class="color-swatch" style="background:{{settings.bg_color}}"></i>
+                        <span id="cur-bg-color" class="current-value">{{settings.bg_color}}</span>
+                    </span>
+                </div>
+                <div class="row row-tight card-actions">
+                    <input id="bg-color-input" type="text" placeholder="#RRGGBB" value="{{settings.bg_color}}" style="width:140px">
+                    <button class="primary" onclick="setBgColor()">保存</button>
+                </div>
+                <p class="hint">修改背景色需要重启容器生效</p>
+            </section>
+
+            <section class="card">
+                <div class="card-head">
+                    <h3>目标显示器 <span class="title-count" id="output-count">--</span></h3>
+                    <button class="btn-mini" id="outputs-refresh" onclick="refreshDisplays()"
+                            title="重新探测显示输出，并自动点亮新接入的接口">↻ 重新探测</button>
+                </div>
+                <div class="kv-row">
+                    <span class="kv-label">当前输出</span>
+                    <span id="output-current" class="current-value">--</span>
+                </div>
+                <div class="kv-row">
+                    <span class="kv-label">接口类型</span>
+                    <span id="output-type" class="current-value">--</span>
+                </div>
+                <div id="output-list" class="output-list">
+                    <span class="quick-loading">正在探测显示输出…</span>
+                </div>
+                <p class="hint" id="output-hint">
+                    HDMI / DisplayPort（含 USB-C 的 DP Alt Mode 与雷电扩展坞）/ VGA / DVI / eDP 全部自动识别，不需要配置自己插的是哪个口。
+                    插上显示器会自动点亮出画面，无需重启容器。多屏时点选一块屏作为布局基准，窗口坐标以该屏左上角为原点。
+                </p>
+            </section>
+
+            <section class="card">
+                <h3>输出分辨率（画布坐标换算用）</h3>
+                <div class="kv-row">
+                    <span class="kv-label">当前分辨率</span>
+                    <span class="current-value">{{settings.display_width}} × {{settings.display_height}}</span>
+                </div>
+                <div class="row row-tight card-actions">
+                    <label>宽：<input id="disp-w" type="number" min="1" max="7680" value="{{settings.display_width}}" style="width:90px"></label>
+                    <label>高：<input id="disp-h" type="number" min="1" max="4320" value="{{settings.display_height}}" style="width:90px"></label>
+                    <button class="primary" onclick="setDisplayResolution()">保存</button>
+                </div>
+                <p class="hint" id="resolution-hint">实际分辨率由显示器 EDID / xrandr 当前模式决定，此处仅作读不到时的兜底与画布换算备用值</p>
+            </section>
+
+            <section class="card">
+                <h3>音频输出设备</h3>
+                <div id="audio-sink-list" class="audio-sink-list">
+                    {% for sink in sinks %}
+                        <div class="sink-card{% if sink.is_default %} active{% endif %}" data-sink-id="{{sink.id}}">
+                            <button type="button" class="sink-main" onclick="setAudioSink('{{sink.id}}')">
+                                <div class="sink-name">{{sink.name}}</div>
+                                <div class="sink-desc">{{sink.desc}}{% if sink.is_default %} · 默认输出{% endif %}</div>
+                            </button>
+                            <div class="sink-vol-row">
+                                <button type="button"
+                                        class="sink-mute{% if sink.muted %} is-muted{% endif %}"
+                                        onclick="toggleSinkMute('{{sink.id}}', {{ 'false' if sink.muted else 'true' }})"
+                                        title="静音 / 取消静音">{% if sink.muted %}🔇{% else %}🔊{% endif %}</button>
+                                <input type="range" class="sink-vol" min="0" max="100"
+                                       value="{{ sink.volume if sink.volume is number and sink.volume >= 0 else 0 }}"
+                                       oninput="onSinkVolumeInput(this, '{{sink.id}}')">
+                                <span class="sink-vol-val">{{ sink.volume if sink.volume is number and sink.volume >= 0 else 0 }}%</span>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+                <p class="hint">点设备名切换默认输出，正在播放的应用会立即迁移到新设备；可直接拖动滑块调音量、点喇叭静音</p>
+            </section>
+
+            <section class="card">
+                <h3>定时自动截图</h3>
+                <div class="kv-row">
+                    <span class="kv-label">当前间隔</span>
+                    <span id="shot-interval-current" class="current-value">
+                        {% if settings.screenshot_interval and settings.screenshot_interval >= 10 %}
+                            每 {{ settings.screenshot_interval }} 秒
+                        {% else %}已关闭{% endif %}
+                    </span>
+                </div>
+                <div class="row row-tight card-actions">
+                    <input id="shot-interval" type="number" min="0" max="3600" step="10"
+                           placeholder="秒，0=关闭"
+                           value="{{ settings.screenshot_interval or 0 }}" style="width:150px">
+                    <button class="primary" onclick="setScreenshotInterval()">保存</button>
+                </div>
+                <p class="hint">0 = 关闭；合法范围 10~3600 秒。截图存容器持久卷 /data/screenshots，自动保留最新 200 张，保存后立即生效。</p>
+            </section>
+
+        </div>
+    </div>
+
+    <!-- ===== 02 应用启动 ===== -->
+    <div class="section-group">
+        <div class="section-title">
+            <span class="section-num">02</span>
+            <span class="section-name">应用启动</span>
+            <span class="section-line"></span>
+        </div>
+
+        <section class="card">
+            <div class="card-head">
+                <h3>已安装应用 <span class="title-count" id="apps-count">扫描中…</span></h3>
+                <button class="btn-mini" id="apps-refresh" onclick="loadInstalledApps()" title="重新扫描已安装应用">↻ 重新扫描</button>
+            </div>
+            <div class="app-grid" id="app-grid">
+                <span class="quick-loading">正在扫描系统中已安装的图形程序…</span>
+            </div>
+            <p class="hint">单击卡片 = 选中该应用，然后在下方画布拖出显示区域（多应用同屏）；双击卡片 = 该应用直接整屏显示。</p>
+
+            <div class="manual-launch">
+                <div class="manual-launch-title">手动启动（未列出的程序可直接输入命令）</div>
+                <div class="row row-tight launch-row">
+                    <input id="app-name-input" type="text" placeholder="程序名（如 vlc）" style="width:160px">
+                    <input id="app-args-input" type="text" placeholder="参数（如 --fullscreen /data/movie.mp4）" style="flex:1;min-width:240px">
+                    <button class="primary" onclick="startCustomApp()">启动</button>
+                </div>
+            </div>
+
+            <div class="quick-row">
+                <div class="quick-actions profile-row">
+                    <select id="profileSelect" class="profile-select" title="选择已保存的布局方案"></select>
+                    <button onclick="applySelectedProfile()" title="把选中方案的窗口摆回屏幕（不改动当前布局）">应用方案</button>
+                    <button class="primary" onclick="saveProfileAs()" title="把当前窗口布局保存为命名方案">保存为方案</button>
+                    <button class="warn" onclick="deleteSelectedProfile()" title="删除选中的命名方案">删除方案</button>
+                </div>
+                <div class="quick-actions">
+                    <button class="success" onclick="saveLayout()">保存当前布局</button>
+                    <button class="primary" onclick="applyLayout()">应用已保存布局</button>
+                    <button class="danger" onclick="stopAllApps()">关闭所有应用</button>
+                </div>
+            </div>
+            <p class="hint">【当前布局】保存到容器持久卷，容器重启后自动恢复；【布局方案】可保存多套命名布局随时切换，应用方案只临时摆放窗口、不影响开机自动恢复。屏幕上已开着的应用只重新定位、不会被重启，已关闭的应用会自动拉起。</p>
+        </section>
+    </div>
+
+    <!-- ===== 03 窗口布局 ===== -->
+    <div class="section-group">
+        <div class="section-title">
+            <span class="section-num">03</span>
+            <span class="section-name">窗口布局与监控</span>
+            <span class="section-line"></span>
+        </div>
+
+        <section class="card">
+            <h3>窗口可视化拖拽布局</h3>
+            <div class="row canvas-toolbar">
+                <span class="kv-label">添加程序</span>
+                <select id="pendingApp"></select>
+                <span class="toolbar-hint">① 选择程序（或直接点击上方应用卡片）→ ② 在屏幕上按住鼠标拖出显示区域</span>
+            </div>
+            <div class="row canvas-toolbar">
+                <span class="kv-label">选中区域</span>
+                <span id="selectedRegionName" class="toolbar-hint">点击画布中的区域可选中，拖动区域可移动，拖右下角可缩放</span>
+                <button class="primary" onclick="setFullscreenFromSelect(true)">全屏</button>
+                <button onclick="setFullscreenFromSelect(false)">退出全屏</button>
+            </div>
+            <div class="row canvas-toolbar">
+                <span class="kv-label">屏幕方向</span>
+                <button class="rot-btn" data-deg="0" onclick="setDisplayRotation(0)">0°</button>
+                <button class="rot-btn" data-deg="90" onclick="setDisplayRotation(90)">90°</button>
+                <button class="rot-btn" data-deg="180" onclick="setDisplayRotation(180)">180°</button>
+                <button class="rot-btn" data-deg="270" onclick="setDisplayRotation(270)">270°</button>
+                <span class="toolbar-hint">旋转目标输出方向；90°/270° 时宽高互换，画布与坐标会自动适配，越界窗口自动拉回屏幕内</span>
+            </div>
+            <div class="drag-canvas-wrap">
+                <div id="dragCanvas">
+                    <div id="regionLayer" class="region-layer"></div>
+                    <div id="snapLayer" class="snap-layer"></div>
+                    <div id="dragBox"><span id="dragBoxLabel"></span></div>
+                    <div id="canvasResolution" class="canvas-resolution">--</div>
+                </div>
+                <p id="canvas-hint" class="canvas-hint">提示：选择程序后在画布上拖出区域，程序即固定显示在该区域内；可继续选择其他程序拖出新区域，多程序同屏展示。靠近屏幕边框或其他区域边缘会自动吸附停靠，区域之间自动防重叠。</p>
+            </div>
+        </section>
+
+        <section class="card">
+            <h3>当前窗口列表 <span id="win-count" class="title-count">0</span></h3>
+            <div id="win-list" class="win-list">
+                {% for w in windows %}
+                {% set wname = (w.app_name or '')|replace('web:', '') or ('PID ' ~ w.pid) %}
+                {% if w.visible is sameas false %}
+                <div class="win-item is-minimized" data-pid="{{w.pid}}">
+                    <div class="win-info">
+                        <span class="pid">{{ wname }}</span>
+                        <span class="min-badge">已最小化</span>
+                    </div>
+                    <div class="coords"><span class="coord-chip">不在屏幕上</span></div>
+                    <span class="actions">
+                        <button class="primary" onclick="activateWin({{w.pid}})">恢复窗口</button>
+                        <button class="danger" onclick="stopApp({{w.pid}})">停止进程</button>
+                    </span>
+                </div>
+                {% else %}
+                <div class="win-item{% if w.fullscreen %} is-fullscreen{% endif %}" data-pid="{{w.pid}}">
+                    <div class="win-info">
+                        <span class="pid">{{ wname }}</span>
+                        {% if w.fullscreen %}<span class="fs-badge">全屏中</span>{% endif %}
+                        {% if w.above %}<span class="above-badge">已置顶</span>{% endif %}
+                    </div>
+                    <div class="coords">
+                        <span class="coord-chip">X {{w.x}}</span>
+                        <span class="coord-chip">Y {{w.y}}</span>
+                        <span class="coord-chip coord-size">{{w.width}} × {{w.height}}</span>
+                    </div>
+                    <span class="actions">
+                        {% if w.fullscreen %}
+                        <button onclick="setFullscreen({{w.pid}}, false)">退出全屏</button>
+                        {% else %}
+                        <button class="primary" onclick="setFullscreen({{w.pid}}, true)">全屏</button>
+                        {% endif %}
+                        <button class="{% if w.above %}warn{% endif %}"
+                                onclick="toggleAbove({{w.pid}}, {{ 'false' if w.above else 'true' }})">
+                            {% if w.above %}取消置顶{% else %}置顶{% endif %}</button>
+                        <button onclick="minimizeWin({{w.pid}})">最小化</button>
+                        <button class="warn" onclick="closeWin({{w.pid}})">关闭窗口</button>
+                        <button class="danger" onclick="stopApp({{w.pid}})">停止进程</button>
+                    </span>
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+        </section>
+    </div>
+
+</div>
+
+<!-- ===== 日志 Modal ===== -->
+<div id="logModal" class="modal-backdrop" style="display:none">
+    <div class="modal-window">
+        <div class="modal-header">
+            <h2>运行日志</h2>
+            <button class="modal-close" onclick="closeLogModal()">关闭</button>
+        </div>
+        <div class="modal-body">
+            <pre id="logContent"></pre>
+        </div>
+    </div>
+</div>
+
+<!-- ===== 截图预览 Modal ===== -->
+<div id="shotModal" class="modal-backdrop" style="display:none">
+    <div class="modal-window shot-window">
+        <div class="modal-header">
+            <h2>屏幕实时画面</h2>
+            <div class="shot-header-actions">
+                <a id="shotOpenNew" href="/screenshot.png" target="_blank" rel="noopener">新窗口打开</a>
+                <button class="modal-close" onclick="closeShotModal()">关闭</button>
+            </div>
+        </div>
+        <div class="modal-body shot-body">
+            <img id="shotImg" alt="屏幕截图">
+        </div>
+    </div>
+</div>
+
+<!-- ===== Toast 容器 ===== -->
+<div id="toastStack" class="toast-stack"></div>
+
+<script src="/static/app.js?v=20260919"></script>
+</body>
+</html>

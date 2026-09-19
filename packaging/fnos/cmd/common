@@ -1,0 +1,100 @@
+#!/bin/bash
+# window-composer 生命周期脚本公共库（被 cmd/ 下各脚本 source）。
+#
+# 飞牛注入的环境变量（见 https://developer.fnnas.com/docs/guide）：
+#   TRIM_APPDEST   应用可执行文件目录 = 安装包内 app/ 的落地位置
+#                  → compose 在 ${TRIM_APPDEST}/docker/docker-compose.yaml
+#                  → 镜像 tar 在 ${TRIM_APPDEST}/docker/image/*.tar
+#   TRIM_PKGVAR    运行时数据目录（映射到容器 /data）
+#   TRIM_APPVER    应用版本，与镜像 tag 一致
+# 向导字段 wizard_* 也会作为环境变量注入。
+
+set -u
+
+WC_APPNAME="window-composer"
+WC_CONTAINER="window-composer"
+WC_LOG="${TRIM_PKGVAR:-/tmp}/lifecycle.log"
+
+wc_log() {
+    local line="[$(date '+%Y-%m-%d %H:%M:%S')] [$WC_APPNAME] $*"
+    echo "$line"
+    mkdir -p "$(dirname "$WC_LOG")" 2>/dev/null || true
+    echo "$line" >>"$WC_LOG" 2>/dev/null || true
+}
+
+# docker 命令不可用时返回空串，调用方据此走降级分支，而不是让脚本崩掉
+wc_docker() {
+    if command -v docker >/dev/null 2>&1; then
+        echo "docker"
+    elif [ -x /usr/bin/docker ]; then
+        echo "/usr/bin/docker"
+    else
+        echo ""
+    fi
+}
+
+# compose 文件位置
+wc_compose_file() {
+    echo "${TRIM_APPDEST:-/tmp}/docker/docker-compose.yaml"
+}
+
+# 安装包内附带的镜像归档（版本无关，用通配以免版本号对不上）
+# 三种扩展名都支持：docker load -i 能自动识别 gzip，.tar.gz/.tgz 免去用户解压。
+wc_image_tar() {
+    local dir="${TRIM_APPDEST:-/tmp}/docker/image"
+    local f
+    for f in "$dir"/*.tar "$dir"/*.tar.gz "$dir"/*.tgz; do
+        [ -f "$f" ] && { echo "$f"; return 0; }
+    done
+    echo ""
+}
+
+# 期望的本地镜像引用
+wc_image_ref() {
+    echo "${WC_APPNAME}:${TRIM_APPVER:-latest}"
+}
+
+# 打印容器运行状态：running / stopped / absent
+wc_container_state() {
+    local d; d=$(wc_docker)
+    [ -n "$d" ] || { echo "absent"; return 0; }
+    if ! "$d" inspect "$WC_CONTAINER" >/dev/null 2>&1; then
+        echo "absent"; return 0
+    fi
+    if [ "$("$d" inspect -f '{{.State.Running}}' "$WC_CONTAINER" 2>/dev/null)" = "true" ]; then
+        echo "running"
+    else
+        echo "stopped"
+    fi
+}
+
+# 导入安装包内自带的镜像（离线自包含的关键一步）。
+# 已存在同 tag 镜像时用 --force 覆盖，保证升级后拿到新镜像。
+wc_load_image() {
+    local tar; tar=$(wc_image_tar)
+    local ref; ref=$(wc_image_ref)
+    local d; d=$(wc_docker)
+
+    if [ -z "$tar" ]; then
+        wc_log "【WARN】安装包内未找到镜像归档（${TRIM_APPDEST:-?}/docker/image/ 下无 .tar/.tar.gz/.tgz）"
+        wc_log "       将回退为联网拉取，离线环境请改用 build-package.sh 生成的完整包"
+        return 2
+    fi
+    if [ -z "$d" ]; then
+        wc_log "【ERROR】找不到 docker 命令，无法导入镜像"
+        return 1
+    fi
+
+    wc_log "导入离线镜像：$tar"
+    if ! "$d" load -i "$tar" >>"$WC_LOG" 2>&1; then
+        wc_log "【ERROR】docker load 失败，详见 $WC_LOG"
+        return 1
+    fi
+    if ! "$d" image inspect "$ref" >/dev/null 2>&1; then
+        wc_log "【WARN】镜像已导入，但未找到 ${ref}（包内镜像 tag 与版本号不一致？）"
+        wc_log "       本地已有镜像：$("$d" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -i "${WC_APPNAME}" | tr '\n' ' ')"
+        return 1
+    fi
+    wc_log "镜像就绪：${ref}（已本地导入，安装后无需联网下载）"
+    return 0
+}

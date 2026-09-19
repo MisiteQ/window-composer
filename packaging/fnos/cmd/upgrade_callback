@@ -1,0 +1,24 @@
+#!/bin/bash
+# 升级后执行：导入新版镜像。旧容器已被 upgrade_init 停止，
+# 平台会按 docker-project 用新镜像重新创建。
+#
+# 数据保留：布局/配置都在 ${TRIM_PKGVAR}/data，升级不清空，
+# 除非向导里 wizard_keep_data=0。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+if [ "${wizard_keep_data:-1}" = "0" ]; then
+    wc_log "【INFO】向导要求重置数据，清空 ${TRIM_PKGVAR:-?}/data"
+    rm -rf "${TRIM_PKGVAR:-/tmp}/data" 2>/dev/null || true
+fi
+
+if wc_load_image; then
+    wc_log "新版镜像已导入：$(wc_image_ref)"
+else
+    wc_log "【WARN】新版镜像导入未成功，平台可能回退为联网拉取"
+fi
+
+exit 0

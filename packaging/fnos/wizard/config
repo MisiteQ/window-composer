@@ -1,0 +1,25 @@
+[
+  {
+    "stepTitle": "显示设置",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_target_output",
+        "label": "目标显示器（留空自动选择）：接口名，如 HDMI-A-1 / DP-1 / VGA-1",
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "wizard_poll_interval",
+        "label": "显示器热插拔检测间隔（秒，填 0 表示关闭自动检测）",
+        "initValue": "5"
+      },
+      {
+        "type": "text",
+        "field": "wizard_timezone",
+        "label": "时区",
+        "initValue": "Asia/Shanghai"
+      }
+    ]
+  }
+]

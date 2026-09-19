@@ -1,0 +1,17 @@
+#!/bin/bash
+# 升级前执行：先停掉旧容器，避免升级过程中容器仍占着 /dev/dri。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+wc_log "准备升级到 ${TRIM_APPVER:-}"
+
+d=$(wc_docker)
+if [ -n "$d" ] && [ "$(wc_container_state)" = "running" ]; then
+    wc_log "停止旧容器"
+    "$d" stop "$WC_CONTAINER" >>"$WC_LOG" 2>&1 || true
+fi
+
+exit 0

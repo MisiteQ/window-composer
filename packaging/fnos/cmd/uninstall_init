@@ -1,0 +1,17 @@
+#!/bin/bash
+# 卸载前执行：先停容器，避免删除过程中 Xorg 仍持有显示设备。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+wc_log "准备卸载"
+
+d=$(wc_docker)
+if [ -n "$d" ] && [ "$(wc_container_state)" = "running" ]; then
+    wc_log "停止容器"
+    "$d" stop "$WC_CONTAINER" >>"$WC_LOG" 2>&1 || true
+fi
+
+exit 0

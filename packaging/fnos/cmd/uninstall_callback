@@ -1,0 +1,33 @@
+#!/bin/bash
+# 卸载清理后执行。
+#
+# 默认保留镜像（重装时免去再次导入 ~1GB tar 的等待），
+# 向导里选择删除时才移除。容器与匿名卷一律清掉，避免残留。
+set -u
+
+CMD_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$CMD_DIR/common"
+
+d=$(wc_docker)
+if [ -z "$d" ]; then
+    wc_log "未检测到 docker，跳过容器清理"
+    exit 0
+fi
+
+if "$d" inspect "$WC_CONTAINER" >/dev/null 2>&1; then
+    wc_log "移除容器 $WC_CONTAINER"
+    "$d" rm -f "$WC_CONTAINER" >>"$WC_LOG" 2>&1 || wc_log "【WARN】容器移除失败"
+fi
+
+if [ "${wizard_remove_image:-0}" = "1" ]; then
+    ref=$(wc_image_ref)
+    if "$d" image inspect "$ref" >/dev/null 2>&1; then
+        wc_log "移除镜像 $ref"
+        "$d" rmi "$ref" >>"$WC_LOG" 2>&1 || wc_log "【WARN】镜像移除失败（可能仍被其它容器引用）"
+    fi
+else
+    wc_log "按向导要求保留镜像 $(wc_image_ref)，下次重装可直接复用"
+fi
+
+exit 0

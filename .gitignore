@@ -1,0 +1,42 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+
+# Data volume
+/data/settings.json
+/data/layout.json
+/data/app.log
+/data/screenshot.png
+
+# 本机开发时用 FNWC_DATA_DIR 指到仓库根的运行数据（settings/pids/log），
+# 以及验证用的截图暂存目录。都属"跑一次就生成"的产物，不进版本管理。
+.localdata/
+.themeshots/
+
+# 注意：.dockerignore 曾经被忽略，但它是构建输入（决定哪些文件不进构建上下文），
+# 不纳入版本管理会导致"我这边能构建、你那边上下文不同"的隐性差异，故不再忽略。
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ---------------------------------------------------------------- 打包产物
+# .fpk 是交付物，体积大（含镜像 tar 可达数百 MB~1GB），不进仓库
+dist/
+*.fpk
+
+# 打包时导出的 docker 镜像 tar：本地产物，用 scripts/build-package.sh 重新生成
+packaging/fnos/app/docker/image/*.tar
+
+# 官方 fnpack 二进制（scripts/build-package.sh 会自动下载到这里，约 4MB）
+tools/
+
+# 离线 wheel 缓存：体积大且可由 scripts/fetch-wheels.sh 重新拉取
+vendor/wheels/*.whl
+vendor/wheels/*.tar.gz

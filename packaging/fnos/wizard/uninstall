@@ -1,0 +1,13 @@
+[
+  {
+    "stepTitle": "卸载",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_remove_image",
+        "label": "是否同时删除已导入的 docker 镜像（1=删除，0=保留以便重装免导入）",
+        "initValue": "0"
+      }
+    ]
+  }
+]
