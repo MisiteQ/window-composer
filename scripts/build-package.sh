@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
-# 一键产出可离线安装的飞牛 fnOS 安装包（.fpk）。
+# 一键产出飞牛 fnOS 安装包（.fpk）。
 #
-#   bash scripts/build-package.sh                 # 完整流程：构建镜像 → 打包 → 出 .fpk
-#   bash scripts/build-package.sh --skip-image    # 复用已有的镜像 tar，只重新打 .fpk
-#   bash scripts/build-package.sh --no-image      # 打个不含镜像的"瘦包"（需联网拉取，仅调试用）
-#   bash scripts/build-package.sh --platform arm  # 在 ARM 机器上打包时声明架构
+#   bash scripts/build-package.sh                 # 标准（联网）包：不含镜像、体积小；
+#                                                 # 装到 NAS 时自动测速择优从 ghcr 拉取镜像
+#   bash scripts/build-package.sh --offline       # 离线包：构建镜像并打入包内（数百 MB）
+#   bash scripts/build-package.sh --skip-image    # 复用已有镜像 tar，只重新打离线包
+#   bash scripts/build-package.sh --platform arm  # ARM 机器上打离线包时声明架构
 #   bash scripts/build-package.sh --print-fnpack  # 只打印 fnpack 路径（供 CI 判断）
 #
 # 跨机协作（本机没有 docker 时）：
 #   bash scripts/build-package.sh --image-only                  # 在 A 机：只构建镜像并导出 tar
-#   bash scripts/build-package.sh --image-tar path/to/image.tar # 在 B 机：用 A 机的 tar 出包
+#   bash scripts/build-package.sh --image-tar path/to/image.tar # 在 B 机：用 A 机的 tar 打离线包
 #
-# 产物：dist/window-composer-<版本>.fpk
+# 产物：dist/window-composer-<版本>.fpk          标准包（小，安装时联网拉取）
+#       dist/window-composer-<版本>-offline.fpk  离线包（大，自带镜像）
 #
 # 说明：本脚本只跑在开发/打包机上；NAS 端从不需要执行它，
 # 也不需要装 docker/ 编译器 —— 拿到 .fpk 在应用中心手动安装即可。
 #
-# 【网络】构建需要能访问 Docker Hub（取基础镜像）与 Debian 源（装软件包）。
+# 【网络】打离线包需要能访问 Docker Hub（取基础镜像）与 Debian 源（装软件包）。
 # 二者都不可达时脚本会自动切到国内镜像站；也可用环境变量固定下来：
 #   WC_BASE_IMAGE      基础镜像引用（如 docker.m.daocloud.io/library/debian:bookworm-slim）
-#   WC_APT_MIRROR      Debian 源前缀（如 https://mirrors.aliyun.com/debian；空串=不换源）
+#   WC_APT_MIRROR      Debian 主源前缀（如 https://mirrors.aliyun.com/debian；空串=不换源）
 #   WC_PIP_INDEX       PyPI 源（默认清华）
 #   WC_REGISTRY_MIRROR Docker Hub 镜像站（默认 docker.m.daocloud.io）
 #
@@ -37,8 +39,8 @@ IMG_DIR="$ROOT/$IMG_REL"
 TOOLS="$ROOT/tools"
 FNPACK_VERSION="${FNPACK_VERSION:-1.2.3}"
 
+OFFLINE=0
 SKIP_IMAGE=0
-NO_IMAGE=0
 IMAGE_ONLY=0
 PLATFORM=""
 PRINT_FNPACK=0
@@ -51,8 +53,8 @@ _i=0
 while [ "$_i" -lt "${#args[@]}" ]; do
     arg="${args[$_i]}"
     case "$arg" in
+        --offline) OFFLINE=1 ;;
         --skip-image) SKIP_IMAGE=1 ;;
-        --no-image) NO_IMAGE=1 ;;
         --image-only) IMAGE_ONLY=1 ;;
         --no-fetch) NO_FETCH=1 ;;
         --print-fnpack) PRINT_FNPACK=1 ;;
@@ -70,18 +72,23 @@ while [ "$_i" -lt "${#args[@]}" ]; do
             fi
             _i=$((_i + 1))
             ;;
-        -h | --help) sed -n '2,28p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "未知参数：$arg" >&2; exit 1 ;;
     esac
     _i=$((_i + 1))
 done
 
-if [ "$IMAGE_ONLY" = "1" ] && [ "$NO_IMAGE" = "1" ]; then
-    echo "【ERROR】--image-only 与 --no-image 互相矛盾" >&2
+# --image-only / --image-tar 本身就围绕镜像 tar 工作，按离线流程处理
+if [ "$IMAGE_ONLY" = "1" ] || [ -n "$IMAGE_TAR" ]; then
+    OFFLINE=1
+fi
+
+if [ "$IMAGE_ONLY" = "1" ] && [ "$SKIP_IMAGE" = "1" ]; then
+    echo "【ERROR】--image-only 与 --skip-image 互相矛盾" >&2
     exit 1
 fi
-if [ -n "$IMAGE_TAR" ] && [ "$NO_IMAGE" = "1" ]; then
-    echo "【ERROR】--image-tar 与 --no-image 互相矛盾" >&2
+if [ -n "$IMAGE_TAR" ] && [ "$SKIP_IMAGE" = "1" ]; then
+    echo "【ERROR】--image-tar 与 --skip-image 互相矛盾" >&2
     exit 1
 fi
 
@@ -265,13 +272,18 @@ fi
 echo "==> 校验打包目录结构"
 py scripts/validate-package.py
 
-# ---------------------------------------------------------------- 2. 构建镜像
+# ---------------------------------------------------------------- 2. 准备镜像
 mkdir -p "$IMG_DIR" "$DIST"
 
-if [ "$NO_IMAGE" = "1" ]; then
-    echo "==> --no-image：跳过镜像（产出的是瘦包，安装时需要联网拉取）"
+if [ "$OFFLINE" != "1" ]; then
+    # 标准（联网）包：不构建、不带入任何镜像。先清掉 image 目录里可能残留
+    # 的 tar，避免本地遗留大文件被误打进标准包导致体积暴增。
+    echo "==> 标准联网包：不含镜像（安装到 NAS 时自动测速从 ghcr 拉取）"
+    rm -f "$IMG_DIR"/window-composer-*.tar \
+          "$IMG_DIR"/window-composer-*.tar.gz \
+          "$IMG_DIR"/window-composer-*.tgz 2>/dev/null || true
 elif [ -n "$IMAGE_TAR" ]; then
-    # 本机没有 docker 时的正路：在别的机器上 --image-only 出 tar，拿回来出包。
+    # 本机没有 docker 时的正路：在别的机器上 --image-only 出 tar，拿回来打离线包。
     echo "==> --image-tar：使用外部构建好的镜像归档"
     if [ ! -f "$IMAGE_TAR" ]; then
         echo "【ERROR】镜像归档不存在：$IMAGE_TAR" >&2
@@ -309,13 +321,12 @@ elif [ "$SKIP_IMAGE" = "1" ]; then
     fi
 else
     if ! command -v docker >/dev/null 2>&1; then
-        echo "【ERROR】本机未找到 docker，无法构建镜像。三种选择：" >&2
-        echo "        1) 在装了 docker 的机器上执行：" >&2
-        echo "           bash scripts/build-package.sh --image-only" >&2
+        echo "【ERROR】本机未找到 docker，无法构建离线镜像。三种选择：" >&2
+        echo "        1) 直接打标准联网包：bash scripts/build-package.sh（无需本机有 docker）" >&2
+        echo "        2) 在装了 docker 的机器上执行 bash scripts/build-package.sh --image-only，" >&2
         echo "           把 $IMG_REL/window-composer-$VERSION.tar 拷回本机，再执行：" >&2
         echo "           bash scripts/build-package.sh --image-tar <拷贝回来的 tar 路径>" >&2
-        echo "        2) --skip-image 复用已有镜像归档" >&2
-        echo "        3) --no-image 打瘦包（安装时需要联网，仅调试用）" >&2
+        echo "        3) --skip-image 复用已有镜像归档" >&2
         exit 1
     fi
 
@@ -407,23 +418,23 @@ if [ "$IMAGE_ONLY" = "1" ]; then
     echo " 归档：${TAR_NAME:-<未找到>}"
     echo " 拷到本机后执行："
     echo "   bash scripts/build-package.sh --image-tar <该 tar 的路径>"
-    echo " 直接在本机构建镜像时，去掉 --image-only 即可一步出 .fpk"
+    echo " 本机离线出包请加 --offline：bash scripts/build-package.sh --offline --image-tar <该 tar 的路径>"
     echo "=============================================="
     exit 0
 fi
 
-# ---------------------------------------------------------------- 3. 复校（含镜像）
-if [ "$NO_IMAGE" = "0" ]; then
-    echo "==> 复核（要求附带镜像 tar）"
+# ---------------------------------------------------------------- 3. 复校
+if [ "$OFFLINE" = "1" ]; then
+    echo "==> 复核离线包（要求附带镜像 tar）"
     py scripts/validate-package.py --require-image
 fi
 
 # ---------------------------------------------------------------- 4. 生成 .fpk
-# 瘦包（--no-image）显式加 -thin 后缀。它和完整包同名是危险的：用户很容易
-# 把瘦包当正式包拿去安装，装完才发现 pull_policy: never 找不到本地镜像起不来。
+# 标准（联网）包直接用版本号命名；离线包加 -offline 后缀，
+# 避免用户把"装时联网拉取"和"自带镜像"两种包搞混。
 FPK_NAME="$APPNAME-$VERSION"
-if [ "$NO_IMAGE" = "1" ]; then
-    FPK_NAME="$FPK_NAME-thin"
+if [ "$OFFLINE" = "1" ]; then
+    FPK_NAME="$FPK_NAME-offline"
 fi
 FPK="$DIST/$FPK_NAME.fpk"
 FPK_REL="dist/$FPK_NAME.fpk"
@@ -461,10 +472,10 @@ echo "=============================================="
 echo " 完成：$FPK"
 echo " 大小：$(du -h "$FPK" | cut -f1)"
 echo " 版本：$VERSION   镜像：$IMAGE_REF"
-if [ "$NO_IMAGE" = "1" ]; then
-    echo " 【注意】这是瘦包（不含镜像）：只能用来验证飞牛是否接受该包格式，"
-    echo "        装完后容器会因 pull_policy: never 找不到本地镜像而起不来。"
-    echo "        正式包请在有 docker 的机器上跑：bash scripts/build-package.sh"
+if [ "$OFFLINE" = "1" ]; then
+    echo " 类型：离线包（镜像已内置，安装无需联网）"
+else
+    echo " 类型：标准联网包（不含镜像，安装时自动测速从 ghcr 拉取，需 NAS 可访问互联网）"
 fi
 echo " 安装：飞牛 fnOS『应用中心 → 手动安装』选择上面的 .fpk"
 echo "=============================================="

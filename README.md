@@ -81,7 +81,7 @@ Xorg、openbox、PipeWire 作为底层服务常驻容器；Web 管理服务只�
 - ✅ 容器开机自启开关（挂载 docker.sock 时实时同步 Docker 重启策略 no / unless-stopped，不只是配置记录）
 - ✅ 运行日志查看页面：Web 层事件与 entrypoint 服务编排日志同一份 `/data/app.log`
 - ✅ 日志自动轮转：超过 2MB 只保留尾部 2000 行（长期运行不会撑爆持久卷，可用 `LOG_MAX_BYTES` / `LOG_KEEP_LINES` 调整）
-- ✅ **离线自包含镜像**：Xorg、驱动、openbox、chromium、中文字体、Python 依赖全部预装，安装到 NAS 后无需再下载任何软件
+- ✅ **自包含镜像**：Xorg、驱动、openbox、chromium、中文字体、Python 依赖全部打进镜像，拉取镜像后运行中不再下载任何软件；安装时自动测速择优选择 ghcr 加速源
 
 ### 访问安全
 - ✅ **出厂初始令牌**：全新部署首次启动写入固定初始令牌 `admin123`（可用环境变量 `WC_ACCESS_TOKEN` 预置）；登录页与面板在未修改前持续醒目提示，首次登录后应立即改为自定义令牌
@@ -93,19 +93,24 @@ Xorg、openbox、PipeWire 作为底层服务常驻容器；Web 管理服务只�
 
 ## 部署方式
 
-### 方式一：飞牛应用中心安装（推荐，完全离线）
+### 方式一：飞牛应用中心安装（推荐）
 
 ```bash
-# 在开发/打包机上产出安装包
+# 在开发/打包机上产出标准安装包（无需本机有 docker）
 bash scripts/build-package.sh
-# → dist/window-composer-<版本>.fpk
+# → dist/window-composer-<版本>.fpk（约 130 KB，不含镜像）
 ```
 
 飞牛桌面 →「应用中心」→ 右上角「**手动安装**」→ 选择该 `.fpk` → 按向导填写目标显示器等 →
 「启动」→ 浏览器打开 `http://<NAS_IP>:8181`。
 
-安装包内自带 docker 镜像，`cmd/install_callback` 会 `docker load` 导入本机，
-之后 compose 以 `pull_policy: never` 启动——**NAS 端不会再联网下载任何东西**。
+安装包本身很小、不含镜像：`cmd/install_callback` 会对多个 ghcr.io 镜像加速源
+（daocloud / 南大 / 1ms 等）**实测延迟并择优拉取**与本机架构匹配的镜像，
+之后 compose 以 `pull_policy: missing` 启动。安装过程中 NAS 需要能访问互联网，
+镜像拉取一次后本地缓存，后续重启不再下载。
+
+> **离线环境**：在有 docker 的机器上执行 `bash scripts/build-package.sh --offline`，
+> 产出 `window-composer-<版本>-offline.fpk`（镜像内置，数百 MB），安装时无需联网。
 
 > 打包请一律走 `scripts/build-package.sh`：`.fpk` 是 **gzip(tar.gz)** 而不是 zip，
 > 飞牛拿到 zip 会报「不是有效的程序文件」。脚本优先调用官方 `fnpack`（缺失时自动下载），

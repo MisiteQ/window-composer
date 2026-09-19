@@ -3,7 +3,7 @@
 把运行在飞牛 fnOS 上的应用，以窗口形式编排并输出到 NAS 的**物理显示器**。
 
 - 支持 **全部显示输出接口**：HDMI、DisplayPort、**USB-C（DP Alt Mode / 雷电扩展坞）**、VGA、DVI、eDP
-- **完全离线自包含**：安装包内自带 Docker 镜像（约 441 MB），安装和运行过程 NAS 端不联网下载任何软件
+- **安装包轻量、镜像按需拉取**：安装包仅约 130 KB，安装时自动对多个 ghcr 加速源测速，择优下载与本机架构匹配的镜像（也提供镜像内置的离线包）
 - 浏览器远程控制面板：画框布局、边缘吸附、多窗口不重叠、屏幕旋转、物理音频路由、实时画面与截图
 - **访问令牌保护**：面板默认只对飞牛桌面入口与本机开放，外部 IP 直接访问需令牌
 
@@ -17,19 +17,18 @@
 
 | 项目 | 要求 |
 | --- | --- |
-| NAS 系统 | 飞牛 fnOS ≥ 0.9.27（应用中心支持 `docker-project` 资源），x86_64 |
+| NAS 系统 | 飞牛 fnOS ≥ 0.9.27（应用中心支持 `docker-project` 资源），x86_64 或 ARM64 |
 | NAS 软件 | 仅需 **Docker**（fnOS 自带，应用中心安装时会自动调用） |
 | 显示器 | 任一接口接到 NAS 显卡输出（HDMI / DP / USB-C / VGA / DVI）；**不接显示器也能装**，会以 1920×1080 虚拟输出运行，面板照常可用 |
 | 音箱/耳机 | 可选。接 NAS 声卡的 3.5mm/HDMI 音频输出即可；不接不影响安装 |
-| 网络 | 安装与运行**均不需要联网**（镜像在包内） |
-| 安装包 | **完整包** `window-composer-1.0.0.fpk`（约 441 MB，文件名**不带** `-thin`） |
+| 网络 | **安装时需要联网**（约 450 MB 镜像，自动测速择优拉取，只下载一次）；之后运行无需联网 |
+| 安装包 | **标准包** `window-composer-1.0.0.fpk`（约 130 KB，文件名**不带** `-offline`） |
 
-> ⚠️ **不要用瘦包上线**：`window-composer-1.0.0-thin.fpk` 不含镜像，只供开发者验证包格式，
-> 安装后容器因找不到本地镜像无法启动。发给用户/自己留档的始终是完整包。
+> 🔌 **完全离线环境**：请改用离线包 `window-composer-1.0.0-offline.fpk`（约 441 MB，
+> 镜像内置），安装时不联网。离线包由 `bash scripts/build-package.sh --offline` 生成。
 >
-> 辨别方法：完整包约 441 MB；拿不准时在电脑上看前几个字节——用文本编辑器（或
-> `head -c 2`）看到 gzip 二进制即可，`.fpk` 本质是 gzip(tar.gz)，**不是 zip**，
-> 不要手工解压再压缩。
+> 辨别方法：标准包约 130 KB、离线包约 441 MB。`.fpk` 本质是 gzip(tar.gz)，
+> **不是 zip**，不要手工解压再压缩。
 
 安装前建议先把显示器接好并通电（不接也没关系，应用支持开机后热插拔自动点亮）。
 
@@ -49,17 +48,22 @@
    | 热插拔检测间隔 | 秒数；`0` = 关闭热插拔自动检测 | `5` |
    | 时区 | 容器时区，国内保持默认即可 | `Asia/Shanghai` |
 
-4. 等待安装完成（首次需导入约 1.1 GB 的镜像层，机械盘上约 1～3 分钟）。
+4. 等待安装完成：安装器会逐个测速 ghcr 加速源（daocloud / 南大 / 1ms 等），
+   从最快的源下载约 450 MB 镜像（具体时长取决于网速；某源失败自动切换下一个）。
 5. 点 **启动**，在飞牛桌面点击 **Window Composer** 图标打开控制面板。
 
 安装器自动完成的事（可在「应用数据目录/lifecycle.log」查看）：
 
 ```
 预检 docker 与宿主显示连接器
-→ docker load 导入包内镜像
-→ docker compose 按内置 docker-project 启动容器（privileged + host 网络）
+→ 对 ghcr 加速源实测延迟并排序
+→ docker pull 最快源上与本机架构匹配的镜像，打成本地 tag
+→ docker compose 按内置 docker-project 启动容器（privileged + host 网络，pull_policy=missing）
 → 容器内 entrypoint：dbus(会话+系统) → PipeWire → WirePlumber → Xorg → openbox → 面板
 ```
+
+> 镜像拉取失败（所有源都不通）时安装不会卡死：日志会记录失败原因，修复网络后
+> 在应用中心重新执行一次安装即可（本地已有的层会复用，支持断点续传）。
 
 ### 安装后修改向导配置
 
@@ -168,9 +172,9 @@ X-Access-Token: 你的令牌                       # 调用 API 时用请求头
 
 ## 六、独立部署（不走应用中心）
 
-适合自行 `docker compose` / `docker run` 管理的用户。镜像可从完整包外构建
-（`docker build -t window-composer:1.0.0 .`），或从包内镜像 tar 导入
-（`docker load -i packaging/fnos/app/docker/image/window-composer-1.0.0.tar`）。
+适合自行 `docker compose` / `docker run` 管理的用户。镜像可直接从 ghcr 拉取
+（`docker pull ghcr.io/misiteq/window-composer:1.0.0`，多架构），
+或从源码自行构建（`docker build -t window-composer:1.0.0 .`）。
 
 ### docker compose
 
@@ -272,8 +276,12 @@ Xorg modesetting 驱动需经内核 KMS/DRM 打开 DRM master 输出画面，特
 ## 八、常见问题
 
 **手动安装提示「不是有效的程序文件」**
-包是 zip 或传输损坏。确认使用完整包且未经解压重打包；检查文件大小约 441 MB。
-Linux/macOS 上执行 `head -c 2 文件 | xxd`，前两字节应为 `1f8b`。重新走一次完整下载。
+包是 zip 或传输损坏。确认包未经解压重打包（标准包约 130 KB、离线包约 441 MB）。
+Linux/macOS 上执行 `head -c 2 文件 | xxd`，前两字节应为 `1f8b`。重新下载后再试。
+
+**安装时镜像一直拉取失败**
+说明当前网络到所有内置 ghcr 加速源都不通。可按日志（`lifecycle.log`）里测速结果
+排查网络；或改用离线包 `window-composer-1.0.0-offline.fpk`（镜像内置）安装。
 
 **浏览器打开面板显示令牌输入页 / 返回 401**
 正常安全机制。全新安装先用出厂初始令牌 `admin123` 登录；之后用你自定义的令牌，
@@ -327,19 +335,30 @@ Linux/macOS 上执行 `head -c 2 文件 | xxd`，前两字节应为 `1f8b`。重
 ## 附录：开发者打包
 
 ```bash
-bash scripts/build-package.sh                 # 一键出完整包 → dist/window-composer-1.0.0.fpk
-bash scripts/build-package.sh --no-image      # 瘦包（文件名自动带 -thin，禁止上线）
-bash scripts/build-package.sh --image-only    # 只出镜像 tar
+bash scripts/build-package.sh                 # 标准联网包 → dist/window-composer-1.0.0.fpk（~130 KB）
+bash scripts/build-package.sh --offline       # 离线包 → dist/window-composer-1.0.0-offline.fpk（~441 MB）
+bash scripts/build-package.sh --image-only    # 只构建并导出镜像 tar（跨机协作）
 python3 scripts/validate-package.py --fpk dist/window-composer-1.0.0.fpk   # 校验成品
 ```
 
-构建依次执行：fnpack 打包 → docker build → **容器内镜像自检（关键二进制 +
+镜像需先推送到 ghcr（多架构 manifest list），标准包安装时才能拉取：
+
+```bash
+docker tag window-composer:1.0.0        ghcr.io/misiteq/window-composer:1.0.0-amd64
+docker tag window-composer-arm:1.0.0    ghcr.io/misiteq/window-composer:1.0.0-arm64
+docker push ghcr.io/misiteq/window-composer:1.0.0-amd64
+docker push ghcr.io/misiteq/window-composer:1.0.0-arm64
+docker buildx imagetools create --tag ghcr.io/misiteq/window-composer:1.0.0 \
+  ghcr.io/misiteq/window-composer:1.0.0-amd64 ghcr.io/misiteq/window-composer:1.0.0-arm64
+```
+
+离线构建依次执行：docker build → **容器内镜像自检（关键二进制 +
 300+ 项离线断言，`pipefail` 保证测试失败即中止）** → docker save 导出镜像 →
 fnpack 出 fpk → 成品格式复验。国内网络用阿里云 Debian 源时注意用 **http**
 （精简基础镜像在安装 ca-certificates 之前无法走 https）：
 
 ```bash
-WC_APT_MIRROR=http://mirrors.aliyun.com/debian bash scripts/build-package.sh
+WC_APT_MIRROR=http://mirrors.aliyun.com/debian bash scripts/build-package.sh --offline
 ```
 
 其他构建参数、跨机器出包、ARM 打包等细节见 [README.md](README.md) 与

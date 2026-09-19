@@ -1,19 +1,20 @@
 # window-composer —— 由飞牛应用中心根据 config/resource 的 docker-project 直接执行。
 #
-# 离线自包含：镜像 window-composer:<版本> 由安装包内的
-# app/docker/image/window-composer-<版本>.tar 在 cmd/install_callback 里
-# docker load 导入本机，因此 pull_policy: never —— 安装后 NAS 端不会再联网
-# 拉取任何镜像或依赖。
+# 安装包默认不含镜像：cmd/install_callback 会对 ghcr.io 的多个加速源测速，
+# 择优拉取与本机架构匹配的镜像并打成本地 tag window-composer:<版本>，
+# 因此这里 pull_policy: missing —— 本地有镜像就直接用（不联网），
+# 万一回调拉取失败，平台启动时还会再尝试按默认源拉取一次。
 services:
   window-composer:
     image: window-composer:1.0.0
     container_name: window-composer
     restart: unless-stopped
-    # 只用安装包内导入的本地镜像，任何情况下都不联网拉取。
+    # missing = 本地镜像存在则不联网，缺失才拉取（never 的绝对禁止会让
+    # install_callback 拉取失败后没有任何兜底）。
     # 若你的 fnOS 版本自带的 docker compose 过旧（< v2.1，2021 年）而报
     # "Additional property pull_policy is not allowed"，可删掉这一行：
-    # compose 默认策略是"本地没有才拉取"，而 install_callback 已经导入了镜像。
-    pull_policy: never
+    # compose 默认策略即为 missing。
+    pull_policy: missing
 
     # Xorg 需要打开 DRM master 才能把画面送到物理显示器；privileged 同时
     # 覆盖 /dev/dri 与输入设备。宿主机没有 /dev/dri 时容器仍能启动并降级为

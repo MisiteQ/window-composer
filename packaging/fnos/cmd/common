@@ -4,10 +4,13 @@
 # 飞牛注入的环境变量（见 https://developer.fnnas.com/docs/guide）：
 #   TRIM_APPDEST   应用可执行文件目录 = 安装包内 app/ 的落地位置
 #                  → compose 在 ${TRIM_APPDEST}/docker/docker-compose.yaml
-#                  → 镜像 tar 在 ${TRIM_APPDEST}/docker/image/*.tar
 #   TRIM_PKGVAR    运行时数据目录（映射到容器 /data）
 #   TRIM_APPVER    应用版本，与镜像 tag 一致
 # 向导字段 wizard_* 也会作为环境变量注入。
+#
+# 镜像策略：安装包默认不含镜像，安装/升级时 wc_pull_image 对 ghcr 加速源
+# 测速择优拉取；离线包（build-package.sh --offline）则在 app/docker/image/
+# 内附带镜像 tar，由 wc_load_image 导入。
 
 set -u
 
@@ -68,8 +71,7 @@ wc_container_state() {
     fi
 }
 
-# 导入安装包内自带的镜像（离线自包含的关键一步）。
-# 已存在同 tag 镜像时用 --force 覆盖，保证升级后拿到新镜像。
+# 导入安装包内自带的镜像（仅离线包使用：build-package.sh --offline）。
 wc_load_image() {
     local tar; tar=$(wc_image_tar)
     local ref; ref=$(wc_image_ref)
@@ -77,7 +79,6 @@ wc_load_image() {
 
     if [ -z "$tar" ]; then
         wc_log "【WARN】安装包内未找到镜像归档（${TRIM_APPDEST:-?}/docker/image/ 下无 .tar/.tar.gz/.tgz）"
-        wc_log "       将回退为联网拉取，离线环境请改用 build-package.sh 生成的完整包"
         return 2
     fi
     if [ -z "$d" ]; then
@@ -95,6 +96,85 @@ wc_load_image() {
         wc_log "       本地已有镜像：$("$d" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -i "${WC_APPNAME}" | tr '\n' ' ')"
         return 1
     fi
-    wc_log "镜像就绪：${ref}（已本地导入，安装后无需联网下载）"
+    wc_log "镜像就绪：${ref}（离线包导入，无需联网）"
     return 0
+}
+
+# ================================================================ 联网镜像拉取
+# ghcr.io 上的规范镜像仓库（多架构 manifest list，按宿主机架构自动选择）
+wc_remote_repo() {
+    echo "misiteq/window-composer"
+}
+
+# ghcr 加速源候选。安装时会逐个实测 /v2/ 响应耗时重新排序，
+# 官方 ghcr.io 放最后兜底。列表变更前可先用 scripts 里的探测脚本在 NAS 上实测。
+# 注：daocloud 仅允许其白名单内镜像（需提 issue 审核），故不列入。
+WC_GHCR_MIRRORS="ghcr.nju.edu.cn ghcr.1ms.run ghcr.dockerproxy.net ghcr.hlmirror.com ghcr.io"
+
+# 单个镜像源一次拉取的最长秒数（默认 15 分钟；卡住就换下一个源）
+WC_PULL_TIMEOUT="${WC_PULL_TIMEOUT:-900}"
+
+# 测速：逐个请求 <mirror>/v2/，按响应耗时从小到大输出源列表；
+# 不通的源排最后（不丢弃——/v2/ 探测失败不代表 pull 一定失败）。
+wc_probe_mirrors() {
+    local h t
+    for h in $WC_GHCR_MIRRORS; do
+        t=$(curl -s -o /dev/null --max-time 5 -w '%{time_total}' \
+            "https://$h/v2/" 2>/dev/null) || t=""
+        [ -z "$t" ] && t="99"
+        echo "$t $h"
+    done | sort -n | awk '{print $2}'
+}
+
+# 确保本地镜像 <appname>:<ver> 存在：
+#   1) 本地已有（同版本重装 / 离线包已 docker load）→ 直接复用，不联网；
+#   2) 否则对 ghcr 加速源测速排序，依次 docker pull，成功后打成本地 tag；
+#   3) 全部失败返回非 0（compose pull_policy=missing 时会再尝试一次官方源）。
+wc_pull_image() {
+    local ref; ref=$(wc_image_ref)
+    local ver; ver="${TRIM_APPVER:-latest}"
+    local repo; repo=$(wc_remote_repo)
+    local d; d=$(wc_docker)
+
+    if [ -z "$d" ]; then
+        wc_log "【ERROR】找不到 docker 命令，无法准备镜像"
+        return 1
+    fi
+
+    if "$d" image inspect "$ref" >/dev/null 2>&1; then
+        wc_log "本地已存在镜像 ${ref}，跳过下载"
+        return 0
+    fi
+
+    # 离线包带了镜像归档时先尝试导入
+    if [ -n "$(wc_image_tar)" ]; then
+        wc_load_image && return 0
+    fi
+
+    wc_log "本地无镜像，开始测速 ghcr 镜像源..."
+    local ordered; ordered=$(wc_probe_mirrors)
+    wc_log "镜像源测速结果：$ordered"
+
+    local mirror rref
+    for mirror in $ordered; do
+        rref="$mirror/$repo:$ver"
+        wc_log "尝试拉取：$rref（超时 ${WC_PULL_TIMEOUT}s）"
+        if command -v timeout >/dev/null 2>&1; then
+            timeout "$WC_PULL_TIMEOUT" "$d" pull "$rref" >>"$WC_LOG" 2>&1
+        else
+            "$d" pull "$rref" >>"$WC_LOG" 2>&1
+        fi
+        if [ $? -eq 0 ] && "$d" image inspect "$rref" >/dev/null 2>&1; then
+            "$d" tag "$rref" "$ref"
+            "$d" rmi "$rref" >>"$WC_LOG" 2>&1 || true
+            if "$d" image inspect "$ref" >/dev/null 2>&1; then
+                wc_log "镜像就绪：${ref}（来源 $mirror）"
+                return 0
+            fi
+        fi
+        wc_log "该源未拉取成功，切换下一个源"
+    done
+
+    wc_log "【ERROR】所有镜像源均未拉取成功，请检查 NAS 网络后重试安装"
+    return 1
 }

@@ -10,11 +10,11 @@ version=1.0.0
 display_name=Window Composer
 desc=把运行在飞牛 NAS 上的应用，以窗口形式编排并输出到 NAS 的物理显示器。<br>支持 HDMI / DisplayPort / USB-C(DP Alt Mode) / VGA / DVI 等全部显示接口，热插拔自动识别；通过浏览器远程控制面板画框布局、边缘吸附、多窗口不重叠、旋转与截图。
 source=thirdparty
-; 包内自带的是 amd64 镜像 tar，属于"含特定架构二进制"，所以只能声明 x86。
-; 官方说明：all 仅用于不含任何架构相关二进制的包；在这里写 all 会让 ARM
-; 飞牛设备也允许安装，结果是容器起不来。在 ARM 机器上打包请加
-; `bash scripts/build-package.sh --platform arm`。
-platform=x86
+; 标准（联网）包内不含 docker 镜像（无任何架构相关二进制），镜像在安装时
+; 按本机架构从 ghcr 多架构镜像拉取，因此声明 all —— x86 / ARM 飞牛均可安装。
+; 打离线包（build-package.sh --offline）时脚本会用 --platform 按实际镜像
+; 架构临时改写本字段（x86 或 arm），构建结束自动还原。
+platform=all
 
 maintainer=Misite齊
 maintainer_url=https://github.com/MisiteQ

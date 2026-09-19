@@ -2,7 +2,7 @@
 """离线校验 packaging/fnos 是否符合飞牛 fnpack 的打包规则。
 
   python3 scripts/validate-package.py
-  python3 scripts/validate-package.py --require-image   # 发布前用：必须附带镜像 tar
+  python3 scripts/validate-package.py --require-image   # 离线包用：必须附带镜像 tar
 
 为什么要有这个脚本：fnpack 是 Go 二进制（Windows/Linux/macOS 各有版本），
 在没有它的机器上无法"先验证再打包"。这里把 fnpack 的检查项（manifest 必填字段、
@@ -380,15 +380,15 @@ def main():
         else:
             check(f"cmd/{name} 引用公共库 common", "common" in text)
 
-    # 升级/安装脚本必须导入离线镜像，否则"装完不用再下载"这条承诺就落空了
+    # 安装/升级脚本必须调用 wc_pull_image（测速择优拉取/复用本地镜像）
     for name in ("install_callback", "upgrade_callback"):
         p = os.path.join(PKG, "cmd", name)
         if os.path.isfile(p):
-            check(f"cmd/{name} 调用 wc_load_image（离线导入镜像）",
-                  "wc_load_image" in read(p))
+            check(f"cmd/{name} 调用 wc_pull_image（测速拉取镜像）",
+                  "wc_pull_image" in read(p))
 
     # ---------------------------------------------------------- compose
-    print("compose：镜像 tag 与版本一致、不联网拉取")
+    print("compose：镜像 tag 与版本一致、本地优先缺失才拉取")
     cpath = os.path.join(PKG, "app", "docker", "docker-compose.yaml")
     check("docker-compose.yaml 存在", os.path.isfile(cpath), cpath)
     compose = read(cpath) if os.path.isfile(cpath) else ""
@@ -397,8 +397,8 @@ def main():
         image_ref = m.group(1) if m else ""
         check(f"compose 镜像 tag == manifest.version（{image_ref}）",
               image_ref.endswith(":" + ver) and ver != "", image_ref)
-        check("compose 声明 pull_policy: never（禁止联网拉取）",
-              "pull_policy" in compose and "never" in compose)
+        check("compose 声明 pull_policy: missing（本地优先，缺失才拉取）",
+              "pull_policy" in compose and "missing" in compose)
         check("compose 使用 privileged（Xorg 需要 DRM master）",
               "privileged: true" in compose)
         check("compose 持久化到 ${TRIM_PKGVAR}",
@@ -411,21 +411,21 @@ def main():
                   var)
 
     # ---------------------------------------------------------- 镜像 tar
-    print("离线镜像：安装包内必须自带 docker 镜像归档")
+    print("镜像归档：默认联网安装包不含镜像，离线包（--offline）才附带")
     img_dir = os.path.join(PKG, "app", "docker", "image")
     tars = ([f for f in os.listdir(img_dir) if f.endswith(IMAGE_SUFFIXES)]
             if os.path.isdir(img_dir) else [])
     if tars:
         for t in tars:
             size_mb = os.path.getsize(os.path.join(img_dir, t)) / 1024 / 1024
-            check(f"镜像归档 {t} 非空（{size_mb:.0f} MB）", size_mb > 1)
+            check(f"镜像归档 {t} 非空（{size_mb:.0f} MB，离线模式）", size_mb > 1)
             check(f"镜像归档文件名含版本号 {ver}", ver in t, t)
     elif args.require_image:
-        check("安装包内自带镜像归档", False,
+        check("离线包内附带镜像归档", False,
               f"{os.path.relpath(img_dir, ROOT)}/ 下没有 .tar/.tar.gz/.tgz，"
-              "请先执行 bash scripts/build-package.sh")
+              "请先执行 bash scripts/build-package.sh --offline")
     else:
-        warn("未附带镜像归档（尚未构建镜像；发布前请加 --require-image）")
+        check("未附带镜像归档（联网安装模式，安装时测速拉取）", True)
 
     for path in args.image_tar:
         validate_image_archive(os.path.join(ROOT, path), ver)

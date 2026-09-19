@@ -1,8 +1,9 @@
 #!/bin/bash
 # 安装文件落盘之后执行。
 #
-# 这里是"离线自包含"的关键：把安装包里自带的 docker 镜像导入本机，
-# 之后容器启动时直接用本地镜像，NAS 端无需再下载任何东西。
+# 安装包本身不含 docker 镜像（保持包体很小）：这里对 ghcr.io 的各个加速源
+# 测速择优，拉取与本机架构匹配的镜像并打成本地 tag；本地已有同版本镜像时
+# 直接复用。之后 compose 以本地镜像启动（pull_policy=missing）。
 set -u
 
 CMD_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -15,11 +16,10 @@ wc_log "数据目录：${TRIM_PKGVAR:-?}"
 mkdir -p "${TRIM_PKGVAR:-/tmp}/data" 2>/dev/null || true
 wc_log "生命周期日志：$WC_LOG"
 
-if wc_load_image; then
-    wc_log "离线镜像导入完成，后续启动不再需要网络"
+if wc_pull_image; then
+    wc_log "镜像准备完成"
 else
-    rc=$?
-    wc_log "【WARN】离线镜像导入未成功（rc=$rc），将依赖平台 compose 自行拉取"
+    wc_log "【WARN】镜像暂未准备成功，启动时 compose 将再尝试联网拉取"
 fi
 
 if [ -f "$(wc_compose_file)" ]; then

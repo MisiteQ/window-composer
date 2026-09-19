@@ -1,16 +1,13 @@
 # window-composer 独立运行用的 compose（不走飞牛应用中心时使用）。
 #
-# 飞牛应用中心安装（推荐）请看 INSTALL.md 的「方式一」，
-# 那份 compose 在 packaging/fnos/app/docker/docker-compose.yaml，
-# 会额外做"离线导入镜像"，不依赖联网。
-#
-# 用法：
+# 用法（镜像已发布在 ghcr，可直接拉取）：
+#   docker pull ghcr.io/misiteq/window-composer:1.0.0
+#   docker tag ghcr.io/misiteq/window-composer:1.0.0 window-composer:1.0.0
 #   docker compose up -d
 #   浏览器打开 http://<NAS_IP>:8181
 #
-# 前置：镜像已构建或导入
+# 也可以自行从源码构建：
 #   docker build -t window-composer:1.0.0 .
-#   # 或从安装包里导入： docker load -i packaging/fnos/app/docker/image/*.tar
 
 services:
   window-composer:
